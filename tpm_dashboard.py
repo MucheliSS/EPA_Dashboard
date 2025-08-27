@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from textblob import TextBlob
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 
@@ -146,15 +145,15 @@ if uploaded_file:
         st.warning(f"Could not load Qualitative sheet: {e}")
         st.success("✅ Quantitative data loaded! GM scores normalized (÷2) for parity.")
 
-    # Resident selection
-    residents = df_quant['Resident Name'].dropna().unique()
-    resident = st.selectbox("Choose Resident", residents)
-    df_res = df_quant[df_quant['Resident Name'] == resident]
-
     # Create tabs
-    tab1, tab2 = st.tabs(["📊 Scores & Charts", "💬 Comments & Sentiment"])
+    tab1, tab2, tab3 = st.tabs(["📊 Individual SR", "🏆 Overall Ranking", "💬 Comments & Sentiment"])
     
     with tab1:
+        # Individual SR Analysis
+        residents = df_quant['Resident Name'].dropna().unique()
+        resident = st.selectbox("Choose Resident", residents)
+        df_res = df_quant[df_quant['Resident Name'] == resident]
+
         # Domain scores by assessor (line plot)
         domains = ['PC', 'MK', 'SBP', 'PBLI', 'Prof', 'ICS']
         df_melt = df_res.melt(
@@ -187,44 +186,90 @@ if uploaded_file:
         st.dataframe(avg_table.style.format("{:.2f}"), use_container_width=True, height=70)
     
     with tab2:
+        # Overall Ranking of All SRs
+        st.subheader("🏆 Overall Ranking of Senior Residents")
+        
+        # Calculate average scores for each resident
+        resident_averages = df_quant.groupby('Resident Name')[['PC', 'MK', 'SBP', 'PBLI', 'Prof', 'ICS', 'Overall']].mean().round(2)
+        
+        # Sort by Overall score (descending)
+        resident_averages = resident_averages.sort_values('Overall', ascending=False)
+        
+        # Add rank column
+        resident_averages['Rank'] = range(1, len(resident_averages) + 1)
+        
+        # Reorder columns to show Rank first
+        resident_averages = resident_averages[['Rank', 'Overall', 'PC', 'MK', 'SBP', 'PBLI', 'Prof', 'ICS']]
+        
+        # Display as interactive table
+        st.dataframe(resident_averages, use_container_width=True)
+        
+        # Bar chart of overall scores
+        st.write("### 📊 Overall Score Comparison")
+        fig_ranking = px.bar(
+            x=resident_averages.index,
+            y=resident_averages['Overall'],
+            title="Average Overall EPA Scores by Resident",
+            labels={'x': 'Resident', 'y': 'Average Overall Score'}
+        )
+        fig_ranking.update_layout(xaxis_tickangle=-45)
+        st.plotly_chart(fig_ranking, use_container_width=True)
+    
+    with tab3:
         # Comments and sentiment analysis
+        residents = df_quant['Resident Name'].dropna().unique()
+        selected_resident = st.selectbox("Choose Resident for Comments", residents, key="comments_resident")
+        
         if not df_qual.empty:
             # Filter qualitative data for this resident
             if 'Resident Name' in df_qual.columns:
-                resident_qual = df_qual[df_qual['Resident Name'] == resident]
+                resident_qual = df_qual[df_qual['Resident Name'] == selected_resident]
             else:
                 # If no resident name column, show all comments
                 resident_qual = df_qual
                 st.info("No resident-specific filtering available in qualitative data. Showing all comments.")
             
             if not resident_qual.empty:
-                st.write(f"### Comments for {resident}")
+                st.write(f"### Comments for {selected_resident}")
                 
-                # Find comment columns (look for columns with text data)
-                comment_columns = []
+                # Look for remarks column (default, no dropdown)
+                remarks_columns = []
                 for col in resident_qual.columns:
-                    if resident_qual[col].dtype == 'object' and col.lower() != 'resident name':
-                        comment_columns.append(col)
+                    if 'remark' in col.lower() or 'comment' in col.lower():
+                        remarks_columns.append(col)
                 
-                if comment_columns:
-                    # Let user choose which comment field to analyze
-                    selected_column = st.selectbox("Select comment field:", comment_columns)
+                if remarks_columns:
+                    # Use first remarks column found
+                    remarks_column = remarks_columns[0]
                     
-                    # Get comments from selected column
-                    comments = resident_qual[selected_column].dropna().astype(str).tolist()
-                    # Filter out very short comments
-                    comments = [c for c in comments if len(c.strip()) > 10]
+                    # Get comments and assessor info
+                    if 'Assessor' in resident_qual.columns:
+                        assessor_col = 'Assessor'
+                    elif 'Name of Evaluator' in resident_qual.columns:
+                        assessor_col = 'Name of Evaluator'
+                    elif 'Evaluator' in resident_qual.columns:
+                        assessor_col = 'Evaluator'
+                    else:
+                        assessor_col = None
                     
-                    if comments:
+                    # Filter meaningful comments
+                    meaningful_comments = resident_qual[
+                        (resident_qual[remarks_column].notna()) & 
+                        (resident_qual[remarks_column].astype(str).str.len() > 10)
+                    ]
+                    
+                    if not meaningful_comments.empty:
+                        comments_list = meaningful_comments[remarks_column].astype(str).tolist()
+                        
                         # Display options
                         comment_view = st.radio("View comments as:", 
                                                ["Sentiment Analysis", "Word Cloud", "Raw Comments"])
                         
                         if comment_view == "Sentiment Analysis":
-                            display_sentiment_analysis(resident, comments)
+                            display_sentiment_analysis(selected_resident, comments_list)
                         
                         elif comment_view == "Word Cloud":
-                            all_text = ' '.join(comments)
+                            all_text = ' '.join(comments_list)
                             if len(all_text.strip()) > 50:
                                 wordcloud = WordCloud(width=800, height=400, 
                                                     background_color='white', 
@@ -238,15 +283,21 @@ if uploaded_file:
                         
                         else:  # Raw Comments
                             st.subheader("📝 All Comments")
-                            for i, comment in enumerate(comments, 1):
-                                with st.expander(f"Comment {i}"):
-                                    st.write(comment)
+                            for idx, row in meaningful_comments.iterrows():
+                                # Use assessor name if available, otherwise generic
+                                if assessor_col and pd.notna(row[assessor_col]):
+                                    assessor_name = str(row[assessor_col])
+                                else:
+                                    assessor_name = f"Assessor {idx + 1}"
+                                
+                                with st.expander(f"📝 {assessor_name}"):
+                                    st.write(row[remarks_column])
                     else:
-                        st.write("No meaningful comments found for this resident.")
+                        st.write("No meaningful remarks found for this resident.")
                 else:
-                    st.write("No comment columns found in qualitative data.")
+                    st.write("No remarks column found in qualitative data.")
             else:
-                st.write(f"No qualitative data found for {resident}.")
+                st.write(f"No qualitative data found for {selected_resident}.")
         else:
             st.write("No qualitative data sheet available.")
 
@@ -255,3 +306,4 @@ else:
 
 st.markdown("---")
 st.caption("🔢 GM scores are automatically normalized (÷2) for fair comparison with EPA scores.")
+
