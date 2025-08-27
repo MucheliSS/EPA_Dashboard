@@ -352,7 +352,6 @@ with tab4:  # New Assessor Analysis Tab
                 st.write(f"No qualitative data found for {selected_resident}.")
         else:
             st.write("No qualitative data sheet available.")
-
 else:
     st.info("Please upload an EPA Excel file to begin.")
 
