@@ -54,6 +54,12 @@ if uploaded_file:
     avg_table.index = ['Mean']
     st.dataframe(avg_table.style.format("{:.2f}"), height=70)
 
+# Show averages for all residents
+    st.write("**Resident Average Overall Scores** (GM normalized)")
+    avg_overall = df.groupby('Resident Name')['Overall'].mean().sort_values(ascending=False)
+    st.dataframe(avg_overall.reset_index().rename(columns={"Overall": "Average Overall"}))
+    fig3 = px.bar(avg_overall, x=avg_overall.index, y='Overall', title="Average Overall Score by Resident")
+    st.plotly_chart(fig3, use_container_width=True)
 else:
     st.info("Please upload an EPA Excel file to begin.")
 
