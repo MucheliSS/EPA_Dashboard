@@ -1,8 +1,11 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from textblob import TextBlob
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
+
+# [Include all the sentiment analysis functions from above here]
 
 st.set_page_config(page_title="EPA Dashboard", layout="wide")
 st.title("EPA Assessment Dashboard")
@@ -17,25 +20,24 @@ if uploaded_file:
         df.loc[df['is_GM'], col] = pd.to_numeric(df.loc[df['is_GM'], col], errors='coerce') / 2.0
         df.loc[~df['is_GM'], col] = pd.to_numeric(df.loc[~df['is_GM'], col], errors='coerce')
 
-    # Try to load qualitative data from individual sheets
+    # Load qualitative data
     qualitative_data = []
     try:
         sheet_names = pd.ExcelFile(uploaded_file).sheet_names
         for sheet in sheet_names:
-            if sheet != 'Quantitative' and sheet != 'Sheet5' and sheet != 'Qualitative':
+            if sheet not in ['Quantitative', 'Sheet5', 'Qualitative']:
                 sheet_df = pd.read_excel(uploaded_file, sheet_name=sheet)
-                # Extract comments from 'C. ADDITIONAL COMMENTS' column
                 if 'C. ADDITIONAL COMMENTS' in sheet_df.columns:
                     comments = sheet_df['C. ADDITIONAL COMMENTS'].dropna()
                     for comment in comments:
-                        if str(comment).strip() and len(str(comment)) > 10:  # Filter meaningful comments
+                        if str(comment).strip() and len(str(comment)) > 10:
                             qualitative_data.append({
                                 'Resident Name': sheet,
                                 'Comments': str(comment),
                                 'Source': 'Individual Sheet'
                             })
-    except:
-        st.warning("Could not load qualitative data - continuing with quantitative only.")
+    except Exception as e:
+        st.warning(f"Could not load qualitative data: {e}")
 
     df_comments = pd.DataFrame(qualitative_data) if qualitative_data else pd.DataFrame()
 
@@ -47,7 +49,7 @@ if uploaded_file:
     df_res = df[df['Resident Name'] == resident]
 
     # Create tabs
-    tab1, tab2 = st.tabs(["📊 Scores & Charts", "💬 Comments"])
+    tab1, tab2 = st.tabs(["📊 Scores & Charts", "💬 Comments & Sentiment"])
     
     with tab1:
         # Your existing score visualization code
@@ -80,16 +82,19 @@ if uploaded_file:
         st.dataframe(avg_table.style.format("{:.2f}"), height=70)
     
     with tab2:
-        # Comments section
+        # Comments with sentiment analysis
         if not df_comments.empty and resident in df_comments['Resident Name'].values:
             st.write(f"### Comments for {resident}")
             
-            # Display options
-            comment_view = st.radio("View comments as:", ["Word Cloud", "Expandable List", "Full Table"])
+            comment_view = st.radio("View comments as:", 
+                                   ["Sentiment Analysis", "Word Cloud", "Expandable List", "Full Table"])
             
             resident_comments = df_comments[df_comments['Resident Name'] == resident]['Comments']
             
-            if comment_view == "Word Cloud":
+            if comment_view == "Sentiment Analysis":
+                display_sentiment_analysis(resident, resident_comments.tolist())
+            
+            elif comment_view == "Word Cloud":
                 all_text = ' '.join(resident_comments.astype(str))
                 if len(all_text.strip()) > 20:
                     wordcloud = WordCloud(width=800, height=400, background_color='white', max_words=50).generate(all_text)
