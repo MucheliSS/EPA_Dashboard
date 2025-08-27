@@ -1,4 +1,4 @@
-# EPA Assessment Dashboard
+# SR TPM Appraisal Dashboard
 
 **A local desktop dashboard to visualize EPA assessment data from Excel files, built with Streamlit.**  
 **Automatically normalizes GM rotation scores for apples-to-apples comparison.**
