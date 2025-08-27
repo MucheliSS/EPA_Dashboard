@@ -4,3 +4,4 @@ openpyxl
 plotly
 protobuf==3.20
 wordcloud
+textblob
