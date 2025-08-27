@@ -146,7 +146,7 @@ if uploaded_file:
         st.success("✅ Quantitative data loaded! GM scores normalized (÷2) for parity.")
 
     # Create tabs
-    tab1, tab2, tab3 = st.tabs(["📊 Individual SR", "💬 Comments & Sentiment" ,"🏆 Overall Ranking"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Individual SR", "💬 Comments & Sentiment" ,"🏆 Overall Ranking", "🔍 Assessor Analysis"])
     
     with tab1:
         # Individual SR Analysis
@@ -184,6 +184,58 @@ if uploaded_file:
         avg_table = pd.DataFrame(avgs).T
         avg_table.index = ['Average']
         st.dataframe(avg_table.style.format("{:.2f}"), use_container_width=True, height=70)
+
+with tab4:  # New Assessor Analysis Tab
+    st.subheader("🔍 Assessor Analysis")
+    
+    analysis_type = st.selectbox(
+        "Select Analysis Type:",
+        ["Individual SR Variation", "Leniency/Stringency", "Overall Consistency"]
+    )
+    
+    if analysis_type == "Individual SR Variation":
+        resident = st.selectbox("Choose Resident for Analysis:", residents)
+        fig = plot_assessor_differences_per_sr(df_quant, resident)
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Show pairwise differences table
+        pairwise_diffs = calculate_pairwise_differences(df_quant)
+        resident_diffs = pairwise_diffs[pairwise_diffs['Resident'] == resident]
+        st.write("### Pairwise Score Differences")
+        st.dataframe(resident_diffs.sort_values('Score_Diff', ascending=False))
+    
+    elif analysis_type == "Leniency/Stringency":
+        raw_leniency = calculate_assessor_leniency(df_quant)
+        adjusted_leniency = calculate_adjusted_leniency(df_quant)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write("### Raw Assessor Means")
+            st.dataframe(raw_leniency.round(2))
+        with col2:
+            st.write("### Adjusted Means (Z-scores)")
+            st.dataframe(adjusted_leniency.round(2))
+        
+        fig = plot_leniency_comparison(raw_leniency, adjusted_leniency)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    else:  # Overall Consistency
+        corr_matrix = calculate_assessor_correlations(df_quant)
+        fig = plot_consistency_heatmap(corr_matrix)
+        st.plotly_chart(fig, use_container_width=True)
+        
+        icc_results = calculate_icc_by_domain(df_quant)
+        st.write("### Intraclass Correlation by Domain")
+        icc_df = pd.DataFrame(list(icc_results.items()), columns=['Domain', 'ICC'])
+        st.dataframe(icc_df.round(3))
+        
+        # Interpretation guide
+        st.write("### ICC Interpretation Guide")
+        st.write("- **0.0-0.4**: Poor consistency")  
+        st.write("- **0.4-0.6**: Moderate consistency")
+        st.write("- **0.6-0.8**: Good consistency")
+        st.write("- **0.8+**: Excellent consistency")
+
     
     with tab3:
         # Overall Ranking of All SRs
