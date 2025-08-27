@@ -146,7 +146,7 @@ if uploaded_file:
         st.success("✅ Quantitative data loaded! GM scores normalized (÷2) for parity.")
 
     # Create tabs
-    tab1, tab2, tab3 = st.tabs(["📊 Individual SR", "🏆 Overall Ranking", "💬 Comments & Sentiment"])
+    tab1, tab2, tab3 = st.tabs(["📊 Individual SR", "💬 Comments & Sentiment" ,"🏆 Overall Ranking"])
     
     with tab1:
         # Individual SR Analysis
@@ -185,7 +185,7 @@ if uploaded_file:
         avg_table.index = ['Average']
         st.dataframe(avg_table.style.format("{:.2f}"), use_container_width=True, height=70)
     
-    with tab2:
+    with tab3:
         # Overall Ranking of All SRs
         st.subheader("🏆 Overall Ranking of Senior Residents")
         
@@ -215,7 +215,7 @@ if uploaded_file:
         fig_ranking.update_layout(xaxis_tickangle=-45)
         st.plotly_chart(fig_ranking, use_container_width=True)
     
-    with tab3:
+    with tab2:
         # Comments and sentiment analysis
         residents = df_quant['Resident Name'].dropna().unique()
         selected_resident = st.selectbox("Choose Resident for Comments", residents, key="comments_resident")
