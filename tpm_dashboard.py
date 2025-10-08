@@ -4,6 +4,7 @@ import plotly.express as px
 from textblob import TextBlob
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
+from io import BytesIO
 
 # Sentiment Analysis Functions
 def analyze_sentiment_textblob(comments):
@@ -127,10 +128,34 @@ st.title("EPA Assessment Dashboard")
 uploaded_file = st.file_uploader("Upload your EPA Excel file", type=["xlsx"])
 
 if uploaded_file:
+    # Read the uploaded workbook into an in-memory buffer so we can access multiple sheets reliably
+    workbook_bytes = uploaded_file.getvalue()
+    excel_buffer = BytesIO(workbook_bytes)
+
+    # Resolve sheet names dynamically so users don't need exact naming
+    try:
+        excel_file = pd.ExcelFile(excel_buffer)
+    except ValueError as e:
+        st.error(f"Unable to read uploaded workbook: {e}")
+        st.stop()
+
+    def find_sheet(keyword):
+        for name in excel_file.sheet_names:
+            if keyword in name.lower():
+                return name
+        return None
+
+    quant_sheet = find_sheet("quant")
+    qual_sheet = find_sheet("qual")
+
+    if not quant_sheet:
+        st.error("Could not find a quantitative sheet. Please ensure one sheet name contains 'quant'.")
+        st.stop()
+
     # Load quantitative data
-    df_quant = pd.read_excel(uploaded_file, sheet_name="Quantitative")
+    df_quant = excel_file.parse(sheet_name=quant_sheet)
     df_quant['is_GM'] = df_quant['Assessment Type'].astype(str).str.contains('GM')
-    
+
     # Normalize GM scores
     for col in ['PC', 'MK', 'SBP', 'PBLI', 'Prof', 'ICS', 'Overall']:
         df_quant.loc[df_quant['is_GM'], col] = pd.to_numeric(df_quant.loc[df_quant['is_GM'], col], errors='coerce') / 2.0
@@ -138,12 +163,19 @@ if uploaded_file:
 
     # Load qualitative data
     try:
-        df_qual = pd.read_excel(uploaded_file, sheet_name="Qualitative")
-        st.success("✅ Data loaded successfully! GM scores normalized (÷2) for parity.")
+        if qual_sheet:
+            df_qual = excel_file.parse(sheet_name=qual_sheet)
+            st.success(
+                f"✅ Data loaded successfully from '{quant_sheet}' and '{qual_sheet}'! GM scores normalized (÷2) for parity."
+            )
+        else:
+            df_qual = pd.DataFrame()
+            st.warning("Could not find a qualitative sheet. Please ensure one sheet name contains 'qual'.")
+            st.success(f"✅ Quantitative data loaded from '{quant_sheet}'! GM scores normalized (÷2) for parity.")
     except Exception as e:
         df_qual = pd.DataFrame()
-        st.warning(f"Could not load Qualitative sheet: {e}")
-        st.success("✅ Quantitative data loaded! GM scores normalized (÷2) for parity.")
+        st.warning(f"Could not load qualitative sheet: {e}")
+        st.success(f"✅ Quantitative data loaded from '{quant_sheet}'! GM scores normalized (÷2) for parity.")
 
     # Create tabs
     tab1, tab2, tab3 = st.tabs(["📊 Individual SR", "💬 Comments & Sentiment" ,"🏆 Overall Ranking"])
