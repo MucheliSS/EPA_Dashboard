@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from typing import List, Optional
 
 # Optional libs: guard-import so the app still works without them
 try:
@@ -16,9 +17,26 @@ except Exception:
     WordCloud, plt = None, None
 
 # -----------------------------
+# Utilities
+# -----------------------------
+def _norm_str_series(s: pd.Series) -> pd.Series:
+    """Trim extra whitespace and normalize to string."""
+    return (
+        s.astype(str)
+         .str.replace(r"\s+", " ", regex=True)
+         .str.strip()
+    )
+
+def pick_first_present(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
+
+# -----------------------------
 # Sentiment helpers (safe)
 # -----------------------------
-def analyze_sentiment_textblob(comments: list[str]) -> pd.DataFrame:
+def analyze_sentiment_textblob(comments: List[str]) -> pd.DataFrame:
     if TextBlob is None:
         return pd.DataFrame(columns=["comment", "sentiment", "polarity_score", "confidence"])
 
@@ -47,11 +65,10 @@ def analyze_sentiment_textblob(comments: list[str]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def create_sentiment_summary(df: pd.DataFrame) -> dict | None:
+def create_sentiment_summary(df: pd.DataFrame):
     if df.empty or "sentiment" not in df:
         return None
     counts = df["sentiment"].value_counts().to_dict()
-    # ensure keys exist
     for k in ("Positive", "Neutral", "Negative"):
         counts.setdefault(k, 0)
     total = int(df.shape[0])
@@ -59,7 +76,7 @@ def create_sentiment_summary(df: pd.DataFrame) -> dict | None:
     return {"counts": counts, "percentages": pct, "total": total}
 
 
-def display_sentiment_analysis(resident_name: str, comments: list[str]) -> None:
+def display_sentiment_analysis(resident_name: str, comments: List[str]) -> None:
     st.subheader(f"📊 Sentiment Analysis for {resident_name}")
 
     if not comments:
@@ -89,12 +106,11 @@ def display_sentiment_analysis(resident_name: str, comments: list[str]) -> None:
     with c4:
         st.metric("Negative", f"{summary['counts']['Negative']} ({summary['percentages']['Negative']:.1f}%)")
 
-    # Pie
+    # Pie (remove invalid 'color' arg; rely on color_discrete_map)
     fig = px.pie(
         values=[summary["counts"]["Positive"], summary["counts"]["Neutral"], summary["counts"]["Negative"]],
         names=["Positive", "Neutral", "Negative"],
         title="Sentiment Distribution",
-        color=["Positive", "Neutral", "Negative"],
         color_discrete_map={"Positive": "#2E8B57", "Neutral": "#FFD700", "Negative": "#DC143C"},
     )
     st.plotly_chart(fig, use_container_width=True)
@@ -110,15 +126,14 @@ def display_sentiment_analysis(resident_name: str, comments: list[str]) -> None:
     else:
         st.info("ℹ️ Mixed feedback — review individual comments for context.")
 
-    # Extremes
-    if "polarity_score" in df:
-        if not df.empty:
-            most_pos = df.loc[df["polarity_score"].idxmax()]
-            most_neg = df.loc[df["polarity_score"].idxmin()]
-            st.write("**Most Positive Comment:**")
-            st.success(most_pos["comment"])
-            st.write("**Most Critical Comment:**")
-            st.error(most_neg["comment"])
+    # Extremes (guard idxmax/min if single row)
+    if "polarity_score" in df and not df.empty:
+        most_pos = df.loc[df["polarity_score"].idxmax()]
+        most_neg = df.loc[df["polarity_score"].idxmin()]
+        st.write("**Most Positive Comment:**")
+        st.success(most_pos["comment"])
+        st.write("**Most Critical Comment:**")
+        st.error(most_neg["comment"])
 
 # -----------------------------
 # App
@@ -128,13 +143,6 @@ st.title("EPA Assessment Dashboard")
 
 uploaded_file = st.file_uploader("Upload your EPA Excel file", type=["xlsx"])
 
-# Helper: column fallbacks
-def pick_first_present(df: pd.DataFrame, candidates: list[str]) -> str | None:
-    for c in candidates:
-        if c in df.columns:
-            return c
-    return None
-
 if uploaded_file:
     # Load Quantitative
     try:
@@ -142,6 +150,10 @@ if uploaded_file:
     except Exception as e:
         st.error(f"Could not load Quantitative sheet: {e}")
         st.stop()
+
+    # Normalize key strings early
+    if "Resident Name" in df_quant.columns:
+        df_quant["Resident Name"] = _norm_str_series(df_quant["Resident Name"])
 
     # Normalize GM scores if Assessment Type exists
     if "Assessment Type" in df_quant.columns:
@@ -156,8 +168,9 @@ if uploaded_file:
     for col in domains_present:
         df_quant[col] = pd.to_numeric(df_quant[col], errors="coerce")
 
-    # Divide GM by 2 only where numeric and present
-    df_quant.loc[is_gm, domains_present] = df_quant.loc[is_gm, domains_present] / 2.0
+    # Divide GM by 2 only where present
+    if is_gm.any() and len(domains_present) > 0:
+        df_quant.loc[is_gm, domains_present] = df_quant.loc[is_gm, domains_present] / 2.0
 
     # Load Qualitative (optional)
     df_qual = pd.DataFrame()
@@ -166,6 +179,18 @@ if uploaded_file:
         df_qual = pd.read_excel(uploaded_file, sheet_name="Qualitative")
     except Exception as e:
         st.warning(f"Qualitative sheet not available: {e}")
+
+    # Normalize Qual strings
+    remarks_col = None
+    if not df_qual.empty:
+        if "Resident Name" in df_qual.columns:
+            df_qual["Resident Name"] = _norm_str_series(df_qual["Resident Name"])
+        for c in df_qual.columns:
+            if "remark" in c.lower() or "comment" in c.lower():
+                remarks_col = c
+                break
+        if remarks_col:
+            df_qual[remarks_col] = _norm_str_series(df_qual[remarks_col])
 
     st.success("✅ Data loaded successfully! GM scores normalized (÷2) where applicable.")
 
@@ -189,7 +214,7 @@ if uploaded_file:
                     df_res["__Evaluator__"] = [f"Eval {i+1}" for i in range(len(df_res))]
                     evaluator_col = "__Evaluator__"
 
-                # Which domains are available (exclude Overall for line chart)
+                # Which domains available (exclude Overall for line chart)
                 domain_line = [c for c in ["PC", "MK", "SBP", "PBLI", "Prof", "ICS"] if c in df_res.columns]
                 if not domain_line:
                     st.warning("No domain columns found to plot.")
@@ -228,7 +253,6 @@ if uploaded_file:
             if not resident_averages.empty:
                 resident_averages = resident_averages.sort_values("Overall", ascending=False)
                 resident_averages["Rank"] = range(1, len(resident_averages) + 1)
-                # Order columns
                 ordered_cols = ["Rank"]
                 if "Overall" in resident_averages.columns:
                     ordered_cols += ["Overall"]
@@ -256,68 +280,85 @@ if uploaded_file:
         else:
             # Identify columns
             resident_col_q = "Resident Name" if "Resident Name" in df_qual.columns else None
-            assessor_col = next((c for c in ["Assessor", "Name of Evaluator", "Evaluator"] if c in df_qual.columns), None)
-            remarks_col = next((c for c in df_qual.columns if "remark" in c.lower() or "comment" in c.lower()), None)
+            if remarks_col is None:
+                # Detect on the fly if not set
+                for c in df_qual.columns:
+                    if "remark" in c.lower() or "comment" in c.lower():
+                        remarks_col = c
+                        break
 
             if not remarks_col:
                 st.write("No remarks/comments column found in qualitative data.")
             else:
-                # resident chooser
-                if "Resident Name" in df_quant.columns:
-                    residents = df_quant["Resident Name"].dropna().unique().tolist()
-                else:
-                    residents = sorted(df_qual[resident_col_q].dropna().unique().tolist()) if resident_col_q else []
+                # Build resident choices from UNION of Quant + Qual
+                residents_quant = (
+                    df_quant["Resident Name"].dropna().unique().tolist()
+                    if "Resident Name" in df_quant.columns else []
+                )
+                residents_qual = (
+                    df_qual["Resident Name"].dropna().unique().tolist()
+                    if resident_col_q else []
+                )
+                resident_choices = sorted(set(residents_quant) | set(residents_qual))
+                resident_choices = ["All"] + resident_choices if resident_choices else ["All"]
 
                 selected_resident = st.selectbox(
                     "Choose Resident for Comments",
-                    residents if residents else ["All"],
-                    index=0,
+                    resident_choices,
                     key="comments_resident",
                 )
 
+                # Filter by resident if possible
                 if resident_col_q and selected_resident != "All":
-                    resident_qual = df_qual[df_qual[resident_col_q] == selected_resident].copy()
+                    resident_qual = df_qual[df_qual[resident_col_q].str.casefold() ==
+                                            str(selected_resident).casefold()].copy()
                 else:
                     resident_qual = df_qual.copy()
                     if not resident_col_q:
                         st.info("No resident column in qualitative data. Showing all comments.")
 
-                if resident_qual.empty:
-                    st.write(f"No qualitative data found for {selected_resident}.")
+                # Relax the filter: any non-empty text
+                meaningful = resident_qual[
+                    resident_qual[remarks_col].notna() &
+                    (resident_qual[remarks_col].str.strip().str.len() > 0)
+                ].copy()
+
+                # Debug counts so you can see data flowing
+                st.caption(
+                    f"Qual rows: {len(df_qual)} | "
+                    f"Filtered for '{selected_resident}': {len(resident_qual)} | "
+                    f"With text in '{remarks_col}': {len(meaningful)}"
+                )
+
+                if meaningful.empty:
+                    st.write("No comments found for this selection.")
                 else:
-                    st.write(f"### Comments for {selected_resident}")
-                    meaningful = resident_qual[
-                        resident_qual[remarks_col].astype(str).str.len().fillna(0) > 10
-                    ].copy()
+                    view = st.radio("View comments as:", ["Raw Comments", "Sentiment Analysis", "Word Cloud"])
+                    comments_list = meaningful[remarks_col].astype(str).tolist()
 
-                    if meaningful.empty:
-                        st.write("No meaningful remarks found.")
-                    else:
-                        view = st.radio("View comments as:", ["Sentiment Analysis", "Word Cloud", "Raw Comments"])
-                        comments_list = meaningful[remarks_col].astype(str).tolist()
+                    if view == "Sentiment Analysis":
+                        display_sentiment_analysis(str(selected_resident), comments_list)
 
-                        if view == "Sentiment Analysis":
-                            display_sentiment_analysis(str(selected_resident), comments_list)
-
-                        elif view == "Word Cloud":
-                            if WordCloud is None or plt is None:
-                                st.info("WordCloud not installed — run `pip install wordcloud matplotlib` to enable.")
-                            else:
-                                all_text = " ".join(comments_list).strip()
-                                if len(all_text) > 50:
-                                    wc = WordCloud(width=800, height=400, background_color="white", max_words=100).generate(all_text)
-                                    fig, ax = plt.subplots(figsize=(10, 5))
-                                    ax.imshow(wc, interpolation="bilinear")
-                                    ax.axis("off")
-                                    st.pyplot(fig)
-                                else:
-                                    st.write("Not enough comment data for word cloud.")
+                    elif view == "Word Cloud":
+                        if WordCloud is None or plt is None:
+                            st.info("WordCloud not installed — run `pip install wordcloud matplotlib` to enable.")
                         else:
-                            st.subheader("📝 All Comments")
-                            for i, row in meaningful.reset_index(drop=True).iterrows():
-                                who = str(row[assessor_col]) if assessor_col and pd.notna(row[assessor_col]) else f"Assessor {i+1}"
-                                with st.expander(f"📝 {who}"):
-                                    st.write(row[remarks_col])
+                            all_text = " ".join(comments_list).strip()
+                            if len(all_text) < 10:
+                                st.write("Not enough comment data for word cloud.")
+                            else:
+                                wc = WordCloud(width=800, height=400, background_color="white", max_words=100).generate(all_text)
+                                fig, ax = plt.subplots(figsize=(10, 5))
+                                ax.imshow(wc, interpolation="bilinear")
+                                ax.axis("off")
+                                st.pyplot(fig)
+                    else:
+                        st.subheader("📝 All Comments")
+                        assessor_col = pick_first_present(meaningful, ["Assessor", "Name of Evaluator", "Evaluator"])
+                        for i, row in meaningful.reset_index(drop=True).iterrows():
+                            who = str(row[assessor_col]) if assessor_col and pd.notna(row[assessor_col]) else f"Assessor {i+1}"
+                            with st.expander(f"📝 {who}"):
+                                st.write(row[remarks_col])
 else:
     st.info("Please upload an EPA Excel file to begin.")
 
