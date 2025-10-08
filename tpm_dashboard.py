@@ -130,7 +130,7 @@ if uploaded_file:
     # Load quantitative data
     df_quant = pd.read_excel(uploaded_file, sheet_name="Quantitative")
     df_quant['is_GM'] = df_quant['Assessment Type'].astype(str).str.contains('GM')
-    
+
     # Normalize GM scores
     for col in ['PC', 'MK', 'SBP', 'PBLI', 'Prof', 'ICS', 'Overall']:
         df_quant.loc[df_quant['is_GM'], col] = pd.to_numeric(df_quant.loc[df_quant['is_GM'], col], errors='coerce') / 2.0
@@ -138,6 +138,8 @@ if uploaded_file:
 
     # Load qualitative data
     try:
+        # Reset file pointer before reading a second sheet from the uploaded file
+        uploaded_file.seek(0)
         df_qual = pd.read_excel(uploaded_file, sheet_name="Qualitative")
         st.success("✅ Data loaded successfully! GM scores normalized (÷2) for parity.")
     except Exception as e:
